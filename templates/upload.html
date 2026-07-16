@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>{{ 'Edit info & search again' if job_id else 'Match a book' }}</h2>
+
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+<form
+  method="post"
+  action="{{ url_for('do_edit', job_id=job_id) if job_id else url_for('do_search') }}"
+  enctype="multipart/form-data"
+>
+  {% if cover_url %}
+  <div class="current-cover">
+    <img class="cover-preview" src="{{ cover_url }}" alt="Current cover">
+    <p class="muted">Current cover — only upload a new photo below if you want to replace it.</p>
+  </div>
+  {% endif %}
+
+  <label>
+    Book cover (single photo){% if not cover_url %} — required{% endif %}
+    <input type="file" name="cover" accept="image/*" {% if not cover_url %}required{% endif %}>
+  </label>
+
+  <fieldset class="scan-fields">
+    <legend>Book info — point your camera at each bit of text, or type it in directly</legend>
+
+    {% for field, label in [('title', 'Title'), ('author', 'Author'), ('publisher', 'Publisher'), ('edition_year', 'Pub. date')] %}
+    <div class="field-row">
+      <label for="{{ field }}-input">{{ label }}</label>
+      <div class="field-input-group">
+        <input type="text" name="{{ field }}" id="{{ field }}-input" value="{{ (info.get(field) if info else '') or '' }}">
+        <button type="button" class="scan-btn" data-field="{{ field }}" data-label="{{ label }}">Scan</button>
+      </div>
+    </div>
+    {% endfor %}
+  </fieldset>
+
+  <label>
+    Image match method
+    <select name="match_method">
+      <option value="phash" {% if not match_method or match_method == 'phash' %}selected{% endif %}>Perceptual hash (fast, default)</option>
+      <option value="clip" {% if match_method == 'clip' %}selected{% endif %}>CLIP embeddings (slower, tolerates looser matches)</option>
+      <option value="none" {% if match_method == 'none' %}selected{% endif %}>Keywords only — skip image comparison</option>
+    </select>
+  </label>
+
+  <label>
+    Results per source
+    <input type="number" name="limit" value="{{ limit or 15 }}" min="1" max="50">
+  </label>
+
+  <button type="submit">Search</button>
+</form>
+
+<div id="scan-overlay" class="scan-overlay hidden">
+  <div class="scan-overlay-inner">
+    <h3 id="scan-overlay-title">Scan</h3>
+    <video id="scan-video" autoplay playsinline muted></video>
+    <canvas id="scan-canvas" hidden></canvas>
+    <p id="scan-status" class="muted">Starting camera…</p>
+    <p class="scan-recognized-label">Recognized text:</p>
+    <p id="scan-recognized-text" class="scan-recognized-text">—</p>
+    <div class="scan-overlay-actions">
+      <button type="button" id="scan-use-btn" disabled>Use this text</button>
+      <button type="button" id="scan-cancel-btn" class="reject">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script>
+(function () {
+  var overlay = document.getElementById("scan-overlay");
+  var video = document.getElementById("scan-video");
+  var canvas = document.getElementById("scan-canvas");
+  var statusEl = document.getElementById("scan-status");
+  var recognizedEl = document.getElementById("scan-recognized-text");
+  var useBtn = document.getElementById("scan-use-btn");
+  var cancelBtn = document.getElementById("scan-cancel-btn");
+  var titleEl = document.getElementById("scan-overlay-title");
+
+  var worker = null;
+  var stream = null;
+  var loopHandle = null;
+  var recognizing = false;
+  var currentField = null;
+  var latestText = "";
+
+  var YEAR_RE = /\b(1[89]\d{2}|20[0-3]\d)\b/g;
+
+  function cleanText(field, raw) {
+    var text = raw.trim().replace(/\s+/g, " ");
+    if (field === "edition_year") {
+      var matches = text.match(YEAR_RE);
+      if (matches) return matches[matches.length - 1];
+    }
+    return text;
+  }
+
+  var TARGET_ASPECT = 4 / 3;
+
+  function drawCroppedFrame() {
+    var vw = video.videoWidth;
+    var vh = video.videoHeight;
+    var srcRatio = vw / vh;
+    var sx, sy, sw, sh;
+
+    if (srcRatio > TARGET_ASPECT) {
+      // wider than 4:3 — crop the sides
+      sh = vh;
+      sw = vh * TARGET_ASPECT;
+      sx = (vw - sw) / 2;
+      sy = 0;
+    } else {
+      // taller than 4:3 — crop top/bottom
+      sw = vw;
+      sh = vw / TARGET_ASPECT;
+      sx = 0;
+      sy = (vh - sh) / 2;
+    }
+
+    canvas.width = sw;
+    canvas.height = sh;
+    canvas.getContext("2d").drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
+  }
+
+  async function scanFrame() {
+    if (recognizing || !worker || video.readyState < 2) return;
+    recognizing = true;
+    drawCroppedFrame();
+
+    try {
+      var result = await worker.recognize(canvas);
+      latestText = cleanText(currentField, result.data.text || "");
+      recognizedEl.textContent = latestText || "(no text recognized yet — hold steady)";
+      useBtn.disabled = !latestText;
+    } catch (e) {
+      // transient recognition hiccup — just keep looping
+    } finally {
+      recognizing = false;
+    }
+  }
+
+  async function openScan(field, label) {
+    currentField = field;
+    latestText = "";
+    titleEl.textContent = "Scan: " + label;
+    statusEl.textContent = "Starting camera…";
+    recognizedEl.textContent = "—";
+    useBtn.disabled = true;
+    overlay.classList.remove("hidden");
+
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment", aspectRatio: { ideal: TARGET_ASPECT } },
+      });
+    } catch (e) {
+      statusEl.textContent = "Couldn't access the camera (" + e.message + "). Type the value in manually instead.";
+      return;
+    }
+    video.srcObject = stream;
+    await video.play();
+
+    statusEl.textContent = "Loading OCR engine…";
+    try {
+      worker = await Tesseract.createWorker("eng");
+    } catch (e) {
+      statusEl.textContent = "Couldn't load the OCR engine (" + e.message + "). Check your internet connection.";
+      return;
+    }
+
+    statusEl.textContent = "Point your camera at the " + label.toLowerCase() + ". Recognized text updates live below.";
+    loopHandle = setInterval(scanFrame, 1200);
+  }
+
+  function closeScan() {
+    if (loopHandle) clearInterval(loopHandle);
+    loopHandle = null;
+    if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
+    stream = null;
+    if (worker) worker.terminate();
+    worker = null;
+    overlay.classList.add("hidden");
+    currentField = null;
+  }
+
+  document.querySelectorAll(".scan-btn").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      openScan(btn.dataset.field, btn.dataset.label);
+    });
+  });
+
+  useBtn.addEventListener("click", function () {
+    if (currentField && latestText) {
+      document.getElementById(currentField + "-input").value = latestText;
+    }
+    closeScan();
+  });
+
+  cancelBtn.addEventListener("click", closeScan);
+})();
+</script>
+{% endblock %}

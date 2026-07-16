@@ -1,0 +1,13 @@
+# secrets — never commit
+.env
+
+# python
+__pycache__/
+*.pyc
+venv/
+
+# local job data — regenerated at runtime, not meant to be tracked
+static/uploads/
+data/cache/
+data/covers/*
+!data/covers/.gitkeep

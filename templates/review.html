@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Results</h2>
+
+<section class="extracted">
+  <h3>Confirmed info</h3>
+  <div class="extracted-grid">
+    <img class="cover-preview" src="{{ cover_url }}" alt="Book cover">
+    <ul>
+      <li><strong>title:</strong> {{ info.get('title') }}</li>
+      <li><strong>author:</strong> {{ info.get('author') }}</li>
+      <li><strong>publisher:</strong> {{ info.get('publisher') }}</li>
+      <li><strong>pub. date:</strong> {{ info.get('edition_year') }}</li>
+    </ul>
+  </div>
+  <p><a href="{{ url_for('edit', job_id=job_id) }}">Edit info &amp; search again</a></p>
+</section>
+
+<section>
+  <h3>Selected matches</h3>
+  {% if selected %}
+  <ul class="confirmed-list">
+    {% for r in selected %}
+    <li>
+      <a href="{{ r.url }}" target="_blank">{{ r.source }}</a>
+      — {{ r.title }}
+      {% if r.asin %} (ASIN: {{ r.asin }}){% endif %}
+      {% if r.similarity is not none %} (similarity {{ "%.3f"|format(r.similarity) }}){% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">None selected yet.</p>
+  {% endif %}
+</section>
+
+<section>
+  <h3>All matches</h3>
+  {% if results %}
+  <div class="candidates">
+    {% for r in results %}
+    <div class="candidate-card {% if r.selected %}selected{% endif %}">
+      {% if r.image_url %}<img src="{{ r.image_url }}" alt="">{% endif %}
+      <div class="candidate-info">
+        <p class="candidate-title">[{{ r.source }}] {{ r.title }}</p>
+        {% if r.author %}<p>author: {{ r.author }}</p>{% endif %}
+        {% if r.publisher %}<p>publisher: {{ r.publisher }}</p>{% endif %}
+        {% if r.binding %}<p>binding: {{ r.binding }}</p>{% endif %}
+        {% if r.publication_date %}<p>pub. date: {{ r.publication_date }}</p>{% endif %}
+        {% if r.asin %}<p>ASIN: {{ r.asin }}</p>{% endif %}
+        {% if r.price is not none %}<p>price: {{ r.price }} {{ r.currency or '' }}</p>{% endif %}
+        <p>image similarity: {{ "%.3f"|format(r.similarity) if r.similarity is not none else "n/a" }}</p>
+        <p>text match: {{ "%.3f"|format(r.text_score) if r.text_score is not none else "n/a" }}</p>
+        <p>year match: {{ "%.3f"|format(r.year_score) if r.year_score is not none else "n/a" }}</p>
+        <p><a href="{{ r.url }}" target="_blank">view listing</a></p>
+        <form method="post" action="{{ url_for('select', job_id=job_id) }}" class="decide-form">
+          <input type="hidden" name="id" value="{{ r.id }}">
+          {% if r.selected %}
+          <button name="action" value="deselect" class="reject">Deselect</button>
+          {% else %}
+          <button name="action" value="select" class="confirm">Select</button>
+          {% endif %}
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted">No matches found.</p>
+  {% endif %}
+</section>
+
+<section>
+  <a href="{{ url_for('upload_form') }}" class="btn-link">New Query</a>
+</section>
+{% endblock %}

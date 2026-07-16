@@ -1,0 +1,16 @@
+requests
+python-dotenv
+pillow
+pillow-heif
+imagehash
+beautifulsoup4
+pytesseract
+flask
+
+# Optional — only needed if you use the LLM-vision extraction backend in src/extract.py
+anthropic
+
+# Optional — only needed if you use the CLIP embedding similarity method in src/match.py
+# These are large installs (torch pulls a few hundred MB); skip them if phash is enough for you.
+open_clip_torch
+torch

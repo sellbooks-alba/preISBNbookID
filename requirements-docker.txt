@@ -1,0 +1,17 @@
+# Minimal set for the hosted web app (app.py) only — the CLI's whole-photo
+# extraction (--backend tesseract/llm) isn't part of what gets deployed here,
+# so this deliberately excludes the tesseract system binary, anthropic, and
+# torch/open_clip. pytesseract itself is still listed: src/pipeline.py
+# imports src/extract.py at module load time (for the CLI's benefit), and
+# extract.py imports pytesseract at its top — so the package needs to be
+# importable even though the web app path never calls into it. It's a small
+# pure-Python wrapper, not the actual OCR engine, so this stays lightweight.
+flask
+gunicorn
+requests
+python-dotenv
+pillow
+pillow-heif
+imagehash
+beautifulsoup4
+pytesseract
