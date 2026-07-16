@@ -84,7 +84,7 @@ def do_search():
 
     info = _info_from_form()
     match_method = request.form.get("match_method", "phash")
-    limit = int(request.form.get("limit") or 15)
+    limit = int(request.form.get("limit") or 5)
 
     return _run_search(job_id, cover_path, _to_url(job_id, cover_path), info, match_method, limit)
 
@@ -118,7 +118,7 @@ def do_edit(job_id):
 
     info = _info_from_form()
     match_method = request.form.get("match_method", "phash")
-    limit = int(request.form.get("limit") or 15)
+    limit = int(request.form.get("limit") or 5)
 
     return _run_search(job_id, cover_path, cover_url, info, match_method, limit)
 
