@@ -1,6 +1,7 @@
 """Compare a reference cover photo against a candidate listing image."""
 
 import io
+import threading
 
 import imagehash
 import pillow_heif
@@ -16,15 +17,23 @@ def _load_image(path_or_url):
     if isinstance(path_or_url, Image.Image):
         return path_or_url
 
-    # EXIF orientation isn't applied automatically by PIL — a sideways phone
-    # photo (either the reference cover or a seller's listing photo) would
-    # otherwise score as a poor match even against the correct book.
     if str(path_or_url).startswith("http"):
         resp = requests.get(path_or_url, timeout=15)
         resp.raise_for_status()
         image = Image.open(io.BytesIO(resp.content))
     else:
         image = Image.open(path_or_url)
+
+    # JPEG-only fast path: hints libjpeg to decode directly at a much lower
+    # resolution via its built-in DCT scaling, instead of fully decoding a
+    # multi-megapixel phone photo just to immediately shrink it — phash only
+    # ever looks at a 32x32 thumbnail of it anyway. draft() is a documented
+    # no-op for any format it doesn't support, so this is safe unconditionally.
+    image.draft("RGB", (128, 128))
+
+    # EXIF orientation isn't applied automatically by PIL — a sideways phone
+    # photo (either the reference cover or a seller's listing photo) would
+    # otherwise score as a poor match even against the correct book.
     return ImageOps.exif_transpose(image).convert("RGB")
 
 
@@ -51,21 +60,26 @@ def phash_similarity(ref, candidate):
 
 
 _clip_model = {"model": None, "preprocess": None}
+_clip_lock = threading.Lock()
 
 
 def _load_clip():
-    if _clip_model["model"] is None:
-        import open_clip
-        import torch
+    # Comparisons now run on a thread pool (search_and_rank) — without the
+    # lock, concurrent first-calls could each see model=None and race to
+    # load their own copy of the model.
+    with _clip_lock:
+        if _clip_model["model"] is None:
+            import open_clip
+            import torch
 
-        model, _, preprocess = open_clip.create_model_and_transforms(
-            "ViT-B-32", pretrained="openai"
-        )
-        model.eval()
-        _clip_model["model"] = model
-        _clip_model["preprocess"] = preprocess
-        _clip_model["torch"] = torch
-    return _clip_model["model"], _clip_model["preprocess"], _clip_model["torch"]
+            model, _, preprocess = open_clip.create_model_and_transforms(
+                "ViT-B-32", pretrained="openai"
+            )
+            model.eval()
+            _clip_model["model"] = model
+            _clip_model["preprocess"] = preprocess
+            _clip_model["torch"] = torch
+        return _clip_model["model"], _clip_model["preprocess"], _clip_model["torch"]
 
 
 def clip_similarity(ref, candidate):

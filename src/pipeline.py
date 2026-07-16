@@ -1,6 +1,7 @@
 import argparse
 import difflib
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 from . import (
     match,
@@ -49,30 +50,34 @@ def search_and_rank(cover_path, info, match_method="phash", limit=15):
     if not query.strip():
         raise ValueError("Not enough info to build a search query — fill in at least a title or author")
 
+    # AbeBooks has a dedicated author field ("an") — passing author again
+    # inside the keyword text on top of that over-constrains the search and
+    # reliably returns zero results.
+    abebooks_query = build_query(info, fields=("title", "publisher"))
+
+    # The 4 sources are independent network calls with no shared state —
+    # running them one after another just adds up their latencies for no
+    # reason. In parallel, total time is roughly the slowest single source
+    # instead of the sum of all four.
+    source_calls = [
+        ("ebay", lambda: search_ebay.search(query, limit=limit)),
+        # delay=0: the built-in "be polite between calls" pause in
+        # search_abebooks.search only matters when looping over many queries
+        # back-to-back; it's just dead time on a single user-triggered search.
+        ("abebooks", lambda: search_abebooks.search(abebooks_query, author=info.get("author"), limit=limit, delay=0)),
+        ("amazon", lambda: search_amazon.search(query, limit=limit)),
+        ("openlibrary", lambda: search_openlibrary.search(query, limit=limit)),
+    ]
+
     candidates = []
-    try:
-        candidates += search_ebay.search(query, limit=limit)
-    except Exception as e:
-        print(f"[ebay] search failed: {e}")
-
-    try:
-        # AbeBooks has a dedicated author field ("an") — passing author again
-        # inside the keyword text on top of that over-constrains the search
-        # and reliably returns zero results.
-        abebooks_query = build_query(info, fields=("title", "publisher"))
-        candidates += search_abebooks.search(abebooks_query, author=info.get("author"), limit=limit)
-    except Exception as e:
-        print(f"[abebooks] search failed: {e}")
-
-    try:
-        candidates += search_amazon.search(query, limit=limit)
-    except Exception as e:
-        print(f"[amazon] search failed: {e}")
-
-    try:
-        candidates += search_openlibrary.search(query, limit=limit)
-    except Exception as e:
-        print(f"[openlibrary] search failed: {e}")
+    with ThreadPoolExecutor(max_workers=len(source_calls)) as pool:
+        futures = {pool.submit(call): name for name, call in source_calls}
+        for future in futures:
+            name = futures[future]
+            try:
+                candidates += future.result()
+            except Exception as e:
+                print(f"[{name}] search failed: {e}")
 
     if match_method == "none":
         scored = [{**c, "similarity": None} for c in candidates]
@@ -86,17 +91,24 @@ def search_and_rank(cover_path, info, match_method="phash", limit=15):
         except Exception as e:
             raise ValueError(f"Could not read the cover photo: {e}")
 
-        scored = []
-        for c in candidates:
+        def _score(c):
             if not c.get("image_url"):
-                scored.append({**c, "similarity": None})
-                continue
+                return {**c, "similarity": None}
             try:
                 score = match.compare(reference, c["image_url"], method=match_method)
             except Exception as e:
                 score = None
                 print(f"[match] failed comparing {c.get('url')}: {e}")
-            scored.append({**c, "similarity": score})
+            return {**c, "similarity": score}
+
+        # Each comparison downloads a remote image (network-bound) and
+        # decodes it (Pillow releases the GIL during the actual C-level
+        # decode) — threads give real speedup on both. Capped at 5, not
+        # "as many as candidates," to keep peak memory bounded on a
+        # constrained host — several full-size images decoded at once is
+        # exactly the kind of load that caused the original OOM.
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            scored = list(pool.map(_score, candidates))
 
     for c in scored:
         c["text_score"] = _text_score(info, c)
