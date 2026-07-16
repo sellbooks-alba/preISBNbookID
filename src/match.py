@@ -11,6 +11,11 @@ pillow_heif.register_heif_opener()  # lets PIL open iPhone-default HEIC/HEIF pho
 
 
 def _load_image(path_or_url):
+    # Already-decoded (the caller pre-loaded a reference image to reuse
+    # across many comparisons — see load_reference) — pass it through as-is.
+    if isinstance(path_or_url, Image.Image):
+        return path_or_url
+
     # EXIF orientation isn't applied automatically by PIL — a sideways phone
     # photo (either the reference cover or a seller's listing photo) would
     # otherwise score as a poor match even against the correct book.
@@ -21,6 +26,19 @@ def _load_image(path_or_url):
     else:
         image = Image.open(path_or_url)
     return ImageOps.exif_transpose(image).convert("RGB")
+
+
+def load_reference(path):
+    """Decode + orient the reference cover photo once, so callers comparing
+    it against many candidates (search_and_rank does this per-candidate, up
+    to ~60 times for a full multi-source search) aren't re-decoding the same
+    file from scratch on every single comparison. That redundant decode work
+    is exactly what caused a real Render crash under load — the free tier's
+    constrained CPU/memory couldn't keep up, hit gunicorn's worker timeout,
+    and got SIGKILLed. Pass the returned object anywhere `ref` is expected;
+    _load_image recognizes an already-decoded image and reuses it directly.
+    """
+    return _load_image(path)
 
 
 def phash_similarity(ref, candidate):

@@ -12,4 +12,8 @@ COPY . .
 ENV PORT=5000
 EXPOSE 5000
 
-CMD gunicorn --bind 0.0.0.0:$PORT --workers 1 app:app
+# --timeout 120: a full search does 4 sequential source lookups plus a
+# network fetch + decode per candidate image — legitimately slow on a free
+# tier's shared CPU, well past gunicorn's 30s default even after fixing the
+# redundant reference-decode bug (see match.load_reference).
+CMD gunicorn --bind 0.0.0.0:$PORT --workers 1 --timeout 120 app:app

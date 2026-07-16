@@ -77,13 +77,22 @@ def search_and_rank(cover_path, info, match_method="phash", limit=15):
     if match_method == "none":
         scored = [{**c, "similarity": None} for c in candidates]
     else:
+        # Decode the reference cover once and reuse it for every candidate —
+        # re-decoding the same file per-candidate (up to ~60x for a full
+        # multi-source search) is exactly what overloaded Render's free tier
+        # and got the worker SIGKILLed. See match.load_reference.
+        try:
+            reference = match.load_reference(cover_path)
+        except Exception as e:
+            raise ValueError(f"Could not read the cover photo: {e}")
+
         scored = []
         for c in candidates:
             if not c.get("image_url"):
                 scored.append({**c, "similarity": None})
                 continue
             try:
-                score = match.compare(cover_path, c["image_url"], method=match_method)
+                score = match.compare(reference, c["image_url"], method=match_method)
             except Exception as e:
                 score = None
                 print(f"[match] failed comparing {c.get('url')}: {e}")
