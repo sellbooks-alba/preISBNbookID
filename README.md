@@ -137,6 +137,43 @@ This is a single-user local tool: job state lives in memory, not a database,
 so it resets if you restart the server. Fine for working through books one at
 a time; not meant to run unattended or be exposed beyond localhost.
 
+### Deploying so it's reachable without your computer on
+
+The web app (not the CLI) can run on a free-tier host via the included
+`Dockerfile` / `requirements-docker.txt`. Only the web app is deployed this
+way — Tesseract/anthropic/torch are excluded from the Docker image entirely,
+since the live camera scan runs client-side (Tesseract.js) and the CLI's
+whole-photo extraction isn't part of what's hosted.
+
+1. Push this repo to GitHub (a git repo + initial commit are already set up
+   locally — `.env` is gitignored, so your keys won't be committed):
+   ```
+   git remote add origin https://github.com/<you>/<repo>.git
+   git push -u origin main
+   ```
+2. Create a free account at [render.com](https://render.com) (no credit card
+   needed for the free tier) and create a new **Web Service**, connecting it
+   to that GitHub repo. Render will detect the `Dockerfile` automatically.
+3. Under the service's **Environment** settings, add the same variables from
+   your local `.env` (`EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, `KEEPA_API_KEY`,
+   `EBAY_VERIFICATION_TOKEN`, `EBAY_NOTIFICATION_ENDPOINT_URL` — update the
+   eBay one to Render's URL once you have it, same re-verification as the
+   ngrok→Render URL change) — `ANTHROPIC_API_KEY` isn't needed, the hosted
+   web app never uses it.
+4. Deploy. Render gives you a permanent `https://<name>.onrender.com` URL.
+
+Two things carry over from local behavior, now on Render's schedule instead
+of yours: **job state still resets on restart** (free tier "sleeps" after
+inactivity and wakes on the next request, wiping in-memory `JOBS` — same
+tradeoff as restarting the local server, just automatic) and **uploaded
+photos are not persisted storage** (same lifecycle as the jobs that
+reference them, so nothing goes stale/orphaned — just don't expect a job to
+survive a sleep cycle). `gunicorn` is deliberately run with `--workers 1` in
+the Dockerfile — `JOBS` is a plain in-memory dict, so multiple worker
+*processes* would each hold a separate copy and randomly not see each
+other's jobs; don't raise the worker count without also moving job state to
+something shared (Redis, a database, ...).
+
 ## Known limitations
 
 - **AbeBooks has no public API** for general use (only for approved
