@@ -17,6 +17,10 @@ for a book, it exactly matches the latest value in
 category id and holds a full [timestamp, rank, timestamp, rank, ...] history,
 not a single current value, so `stats.current[3]` is the much simpler read),
 same -1-means-no-data convention as price.
+
+Defaults to Amazon UK (Keepa domain id 2) — `_DOMAINS` maps each Keepa domain
+id to its Amazon TLD and listing currency, used for both the product URL and
+the price's currency label.
 """
 
 import requests
@@ -27,9 +31,21 @@ from .http_utils import raise_for_status_safe
 _BASE_URL = "https://api.keepa.com"
 _IMAGE_BASE = "https://m.media-amazon.com/images/I/"
 
+# Keepa domain id -> (Amazon TLD, listing currency). Default is 2 (Amazon UK).
+_DOMAINS = {
+    1: ("com", "USD"),
+    2: ("co.uk", "GBP"),
+    3: ("de", "EUR"),
+    4: ("fr", "EUR"),
+    6: ("ca", "CAD"),
+    7: ("it", "EUR"),
+    8: ("es", "EUR"),
+}
+_DEFAULT_DOMAIN = 2
 
-def _asin_url(asin, domain=1):
-    tld = {1: "com", 2: "co.uk", 3: "de", 4: "fr", 6: "ca", 8: "es", 7: "it"}.get(domain, "com")
+
+def _asin_url(asin, domain=_DEFAULT_DOMAIN):
+    tld = _DOMAINS.get(domain, _DOMAINS[_DEFAULT_DOMAIN])[0]
     return f"https://www.amazon.{tld}/dp/{asin}"
 
 
@@ -48,7 +64,7 @@ def _format_keepa_date(raw):
     return s
 
 
-def search_asins(term, domain=1, limit=15):
+def search_asins(term, domain=_DEFAULT_DOMAIN, limit=15):
     resp = requests.get(
         f"{_BASE_URL}/search",
         params={
@@ -64,7 +80,7 @@ def search_asins(term, domain=1, limit=15):
     return [p["asin"] for p in products if p.get("asin")][:limit]
 
 
-def product_lookup(asins, domain=1):
+def product_lookup(asins, domain=_DEFAULT_DOMAIN):
     if not asins:
         return []
 
@@ -80,6 +96,7 @@ def product_lookup(asins, domain=1):
     )
     raise_for_status_safe(resp)  # the key is a URL param — don't let it leak via raise_for_status()'s message
     products = resp.json().get("products") or []
+    currency = _DOMAINS.get(domain, _DOMAINS[_DEFAULT_DOMAIN])[1]
 
     results = []
     for p in products:
@@ -106,7 +123,7 @@ def product_lookup(asins, domain=1):
                 "binding": p.get("binding"),
                 "publication_date": _format_keepa_date(p.get("publicationDate")),
                 "price": (price_cents / 100) if price_cents is not None else None,
-                "currency": "USD",
+                "currency": currency,
                 "sales_rank": sales_rank,
                 "url": _asin_url(p.get("asin"), domain=domain),
                 "image_url": f"{_IMAGE_BASE}{first_image}" if first_image else None,
@@ -115,6 +132,6 @@ def product_lookup(asins, domain=1):
     return results
 
 
-def search(query, domain=1, limit=15):
+def search(query, domain=_DEFAULT_DOMAIN, limit=15):
     asins = search_asins(query, domain=domain, limit=limit)
     return product_lookup(asins, domain=domain)
