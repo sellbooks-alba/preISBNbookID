@@ -10,7 +10,13 @@ on a couple of these — worth re-checking if Keepa changes their API again):
 prices come back in cents with -1 meaning "no data"; images come back as a
 list of dicts (`images: [{"l": "<filename>.jpg", "m": "<filename>.jpg", ...}]`),
 not a CSV string; `publisher` is frequently null for books — `brand` (e.g.
-"SCRIBNER") is the more reliably populated field for that.
+"SCRIBNER") is the more reliably populated field for that. `stats.current[3]`
+is the current Amazon sales rank in the product's root category (confirmed:
+for a book, it exactly matches the latest value in
+`salesRanks[str(rootCategory)]`'s history — `salesRanks` itself is keyed by
+category id and holds a full [timestamp, rank, timestamp, rank, ...] history,
+not a single current value, so `stats.current[3]` is the much simpler read),
+same -1-means-no-data convention as price.
 """
 
 import requests
@@ -88,6 +94,8 @@ def product_lookup(asins, domain=1):
                 price_cents = current[idx]
                 break
 
+        sales_rank = current[3] if len(current) > 3 and current[3] not in (None, -1) else None
+
         results.append(
             {
                 "source": "amazon",
@@ -99,6 +107,7 @@ def product_lookup(asins, domain=1):
                 "publication_date": _format_keepa_date(p.get("publicationDate")),
                 "price": (price_cents / 100) if price_cents is not None else None,
                 "currency": "USD",
+                "sales_rank": sales_rank,
                 "url": _asin_url(p.get("asin"), domain=domain),
                 "image_url": f"{_IMAGE_BASE}{first_image}" if first_image else None,
             }

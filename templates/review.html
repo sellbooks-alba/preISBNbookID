@@ -48,6 +48,7 @@
         {% if r.binding %}<p>binding: {{ r.binding }}</p>{% endif %}
         {% if r.publication_date %}<p>pub. date: {{ r.publication_date }}</p>{% endif %}
         {% if r.asin %}<p>ASIN: {{ r.asin }}</p>{% endif %}
+        {% if r.sales_rank %}<p>sales rank: #{{ "{:,}".format(r.sales_rank) }}</p>{% endif %}
         {% if r.price is not none %}<p>price: {{ r.price }} {{ r.currency or '' }}</p>{% endif %}
         <p>image similarity: {{ "%.3f"|format(r.similarity) if r.similarity is not none else "n/a" }}</p>
         <p>text match: {{ "%.3f"|format(r.text_score) if r.text_score is not none else "n/a" }}</p>
